@@ -1,0 +1,2 @@
+ * downloader/ contains an example for retrieving and parsing HTML sites
+ * configurable-http-proxy/ adds policy/interceptor support for http-proxy
