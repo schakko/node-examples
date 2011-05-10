@@ -14,12 +14,16 @@ Object.spawn = function (parent, props) {
 exports.Constants = function() {
 }
 
-exports.Constants.INTERCEPTOR_FLAGS = {
+exports.Constants.INTERCEPTOR_STATUS = {
 	HEADER_MODIFIED: 1,
 	CONTENT_MODIFIED: 2,
 }
+
 exports.Constants.INTERCEPTOR_OPTIONS = {
-	IGNORE_FURTHER_INTERCEPTORS: 0
+	MAKE_OUTGOING_REQUEST: 1,
+	IGNORE_FURTHER_INTERCEPTORS: 2,
+	IGNORE_NEXT_BEFORE_INTERCEPTORS: 4,
+	IGNORE_NEXT_AFTER_INTERCEPTORS: 8
 }
 
 /** Chain **/
@@ -41,7 +45,7 @@ exports.Chain.prototype = {
 		}
 
 		this.beforeInterceptors.push(action);
-        return this;
+        	return this;
 	},
 
 	after: function(action) {
@@ -50,38 +54,39 @@ exports.Chain.prototype = {
 		}
 
 		this.afterInterceptors.push(action);
-        return this;
+        	return this;
 	},
     
-    process: function(req, res, policy_req) {
+    	process: function(req, res, policy_req) {
 		if (policy_req == undefined) {
 			policy_req = new ProxyPolicyConfiguration();
 		}
 
-        // make parameters available in forEach
-        var curStage = this.currentStage();
+        	// make parameters available in forEach
+        	var curStage = 	this.currentStage(), 
+				cancelProcessingStage = exports.Constants.INTERCEPTOR_OPTIONS["IGNORE_NEXT_" + curStage.toUpperCase() + "_INTERCEPTORS"];
 
 		for (i = 0, m = this[curStage + "Interceptors"].length; i < m; i++) {
 			            
-			var action = this[curStage + "Interceptors"][i], 
-				r = action(req, res, policy_req, curStage);
+			var action = this[curStage + "Interceptors"][i];
+			
+			action(req, res, policy_req, curStage);
+          		policy_req.interceptors_executed.push(action);
 
-            policy_req.interceptors_executed.push(action);
-
-            if (r === exports.Constants.INTERCEPTOR_OPTIONS.IGNORE_FURTHER_INTERCEPTORS) {
-                break;
-            }
-        };
+            		if (policy_req.options.has(cancelProcessingStage)) {
+                		break;
+            		}
+        	};
         
-        return this;
-    },
+       		return this;
+    	},
     
 	nextStage: function() {
-        if (++(this.current_stage) == this.stages.length) {
-            throw Error("Invalid call of nextStage. No more stages available");
-        }
+        	if (++(this.current_stage) == this.stages.length) {
+            		throw Error("Invalid call of nextStage. No more stages available");
+        	}
         
-        return this;
+        	return this;
 	},
 	
 	currentStage: function() {
@@ -100,19 +105,38 @@ exports.Chain.prototype = {
 
 /** ProxyPolicyRequest */
 exports.ProxyPolicyRequest = function() {
-    this.flags = 0;
-    this.interceptors_executed = [];
+	this.status  = new exports.BitField();
+	this.options = new exports.BitField();
+	this.options.set(exports.Constants.MAKE_OUTGOING_REQUEST);
+	this.interceptors_executed = [];
+};
+
+exports.ProxyPolicyRequest.prototype = {
+};
+
+exports.BitField = function() {
+	this.field = 0;
+};
+
+exports.BitField.prototype = {
+	has: function(_flag) {
+		return this.field & _flag;
+	},
+
+	set: function(_flag) {
+		this.field |= _flag;
+	}
 };
 
 exports.ProxyConfiguration = function(_defaultPolicy) {
-    this.policies = [];
+	this.policies = [];
 
 	if (typeof(_defaultPolicy) == 'function') {
 		this.defaultPolicy = _defaultPolicy;
 	} 
 	else {
 		this.defaultPolicy = new exports.Chain(function(req, res) {
-	        return true;
+	        	return true;
 	    });
 	}
 };
@@ -148,11 +172,19 @@ exports.ConfigurableProxy = function(httpProxyInstance, proxyPolicyConfiguration
 		        usedPolicy = policy;
 		        break;
 		    }
-		};
+		}
 		    
 		usedPolicy.process(req, res, policy_request);
-		proxy.proxyRequest(req, res, policy_request);
-		usedPolicy.nextStage().process(req, res, policy_request).reset();
+		
+		// Pass request to proxy backend
+		if (policy_request.options.has(exports.Constants.INTERCEPTOR_OPTIONS.MAKE_OUTGOING_REQUEST)) {
+			proxy.proxyRequest(req, res, policy_request);
+		}
+
+		// performance: if already this option is defined, ignore next stage
+		if (!policy_request.options.has(exports.Constants.INTERCEPTOR_OPTIONS.IGNORE_NEXT_AFTER_INTERCEPTORS)) {
+			usedPolicy.nextStage().process(req, res, policy_request).reset();
+		}
 	};
 
 	this.start = function(port) {

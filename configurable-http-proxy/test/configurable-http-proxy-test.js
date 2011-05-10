@@ -58,7 +58,7 @@ vows.describe('Configurable HTTP Proxy').addBatch({
 			}
 		},
 		'when chain is processed': {
-			'it must end if IGNORE_FURTHER_CHAINS is defined': function(chain) {
+			'it must end if IGNORE_NEXT_BEFORE_INTERCEPTORS is defined': function(chain) {
 				chain.clear();
 				chain.reset();
 				var first = function(req, res, pr, cur) {
@@ -69,8 +69,8 @@ vows.describe('Configurable HTTP Proxy').addBatch({
 				};
 				var second = function(req, res, pr) {
 					assert.equal(pr.interceptors_executed[0], first);
-					pr.flags = Constants.INTERCEPTOR_FLAGS.HEADER_MODIFIED; 
-					return Constants.INTERCEPTOR_OPTIONS.IGNORE_FURTHER_INTERCEPTORS;
+					pr.status.set(Constants.INTERCEPTOR_STATUS.HEADER_MODIFIED); 
+					pr.options.set(Constants.INTERCEPTOR_OPTIONS.IGNORE_NEXT_BEFORE_INTERCEPTORS);	
 				};
 				var third = function() { throw Error("Third method not allowed!"); };
 
@@ -83,7 +83,7 @@ vows.describe('Configurable HTTP Proxy').addBatch({
 
 				assert.equal(pr.interceptors_executed.length, 2);
 				assert.equal(pr.interceptors_executed[1], second);
-				assert.equal(pr.flags, Constants.INTERCEPTOR_FLAGS.HEADER_MODIFIED);
+				assert.equal(pr.status.has(Constants.INTERCEPTOR_STATUS.HEADER_MODIFIED), true);
 			},
 		}
 	},
@@ -97,16 +97,41 @@ vows.describe('Configurable HTTP Proxy').addBatch({
 })
 .addBatch({
 	'A configurable proxy': {
-		'must change the request': function(server) {
+		topic: function() {
 		},
-		'must change the response': function(server) {
+		'must block advertises by URL': function(server) {
+			var ppc = new ProxyConfiguration();
+			var chain = new Chain(function(req, res) {
+				if (req.path.indexof("adverts.com")) {
+					return true;
+				}
+
+				return false;
+			});
+			
+			chain.before(function(req, res, policy_req) {
+				// block content, cause chain matched already adverts.com
+				req.end("ADVERT");
+				policy_req.options.set(Constants.INTERCEPTOR_OPTIONS.IGNORE_NEXT_BEFORE_INTERCEPTORS);
+			}).after(function(req, res, policy_req) {
+				throw Error("after interceptor irregulary executed");
+			});
+
+			var ppc = new ProxyConfiguration(chain);
+		},
+		'must change the method type from GET to POST': function(server) {
+		},
+		'must change the content of the server': function(server) {
+		},
+		'must change the HTTP status code': function(server) {
 		},
 	}
 }).
 addBatch({
   "When the tests are over": {
     topic: function () {
-      return runner.closeServers();
+  return true;
+	 // return runner.closeServers();
     },
     "the servers should clean up": function () {
       assert.isTrue(true);
