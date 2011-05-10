@@ -107,7 +107,7 @@ exports.Chain.prototype = {
 exports.ProxyPolicyRequest = function() {
 	this.status  = new exports.BitField();
 	this.options = new exports.BitField();
-	this.options.set(exports.Constants.MAKE_OUTGOING_REQUEST);
+	this.options.set(exports.Constants.INTERCEPTOR_OPTIONS.MAKE_OUTGOING_REQUEST);
 	this.interceptors_executed = [];
 };
 
@@ -131,7 +131,7 @@ exports.BitField.prototype = {
 exports.ProxyConfiguration = function(_defaultPolicy) {
 	this.policies = [];
 
-	if (typeof(_defaultPolicy) == 'function') {
+	if (typeof(_defaultPolicy) == 'object') {
 		this.defaultPolicy = _defaultPolicy;
 	} 
 	else {
@@ -155,40 +155,49 @@ ProxyConfiguration.policies.push(Object.spawn(Chain, {
     console.log("Response: " + res);
 }));
 */
-
-exports.ConfigurableProxy = function(httpProxyInstance, proxyPolicyConfiguration) {
-	this.httpProxy = httpProxyInstance;
+l = function(s) {
+console.log(s);
+}
+exports.ConfigurableProxy = function(proxyPolicyConfiguration) {
+	// make this context available in proxyRequestHandler
+	var self = this;
 	this.proxyPolicyConfiguration = proxyPolicyConfiguration;
+	this.proxyInstance = null;
 
 	this.proxyRequestHandler = function(req, res, proxy) {
 		var buffer = proxy.buffer(req);
-		var usedPolicy = this.proxyPolicyConfiguration.defaultPolicy;
-		var policy_request = Object.spawn(exports.ProxyPolicyRequest, {
-		    host: req.headers.host
-		});
-
-		for (var i = 0, m = this.proxyPolicyConfiguration.policies.length; i < m; i++) {
+//l(req)
+		var usedPolicy = self.proxyPolicyConfiguration.defaultPolicy;
+		var policy_request = new exports.ProxyPolicyRequest();
+		policy_request.host = req.headers.host;
+		for (var i = 0, m = self.proxyPolicyConfiguration.policies.length; i < m; i++) {
 		    if (policy.match(req, res, proxy)) {
 		        usedPolicy = policy;
 		        break;
 		    }
 		}
-		    
 		usedPolicy.process(req, res, policy_request);
+		
+		// performance: if already this option is defined, ignore next stage
+		if (!policy_request.options.has(exports.Constants.INTERCEPTOR_OPTIONS.IGNORE_NEXT_AFTER_INTERCEPTORS)) {
+			self.proxyInstance.on('end', function() {
+				usedPolicy.nextStage().process(req, res, policy_request).reset();
+			});
+		}
 		
 		// Pass request to proxy backend
 		if (policy_request.options.has(exports.Constants.INTERCEPTOR_OPTIONS.MAKE_OUTGOING_REQUEST)) {
 			proxy.proxyRequest(req, res, policy_request);
+
 		}
 
-		// performance: if already this option is defined, ignore next stage
-		if (!policy_request.options.has(exports.Constants.INTERCEPTOR_OPTIONS.IGNORE_NEXT_AFTER_INTERCEPTORS)) {
-			usedPolicy.nextStage().process(req, res, policy_request).reset();
-		}
 	};
 
 	this.start = function(port) {
-		this.httpProxy.createServer(proxyRequestHandler).listen(port);
+		(self.proxyInstance = httpProxy.createServer(this.proxyRequestHandler)).listen(port);
 	};
-}
-
+	
+	this.close = function() {
+		self.proxyInstance.close();
+	};
+};
